@@ -1,23 +1,22 @@
-{ pkgs ? import <nixpkgs> { } }:
+{
+  lib,
+  stdenv,
+  buildNpmPackage,
+  fetchurl,
+  makeWrapper,
+  copyDesktopItems,
+  makeDesktopItem,
+  nodePackages,
+  nodejs_24,
+  electron_40,
+  p7zip,
+  python3,
+  pkg-config,
+  gnumake,
+  gcc,
+  runCommand,
+}:
 let
-  inherit (pkgs)
-    lib
-    stdenv
-    buildNpmPackage
-    fetchurl
-    makeWrapper
-    copyDesktopItems
-    makeDesktopItem
-    nodePackages
-    nodejs_24
-    electron_40
-    p7zip
-    python3
-    pkg-config
-    gnumake
-    gcc
-    ;
-
   pname = "codex-app";
   version = "26.226.940";
 
@@ -26,7 +25,7 @@ let
     hash = "sha256-+Zv1I5HAMjXQzdpt5DxKquncOJmDRT/Cwa6Z9c5SsUA=";
   };
 
-  nativeModulesSrc = pkgs.runCommand "codex-native-modules-src" { } ''
+  nativeModulesSrc = runCommand "codex-native-modules-src" { } ''
     mkdir -p "$out"
 
     cat > "$out/package.json" <<'JSON'

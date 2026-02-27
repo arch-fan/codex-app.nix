@@ -3,11 +3,11 @@
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
-  outputs = { self, nixpkgs }:
+  outputs = { nixpkgs, ... }:
     let
       system = "x86_64-linux";
       pkgs = import nixpkgs { inherit system; };
-      codexApp = import ./package.nix { inherit pkgs; };
+      codexApp = pkgs.callPackage ./package.nix { };
     in {
       packages.${system} = {
         codex = codexApp;
