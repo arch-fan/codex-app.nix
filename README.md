@@ -28,6 +28,11 @@ This improves reproducibility compared to the moving `Codex.dmg` URL, because th
 
 The flake exports `codex-app` as a package for `x86_64-linux` (and as the default package), plus a default app entry that points to the `codex-app` launcher.
 
+The launcher defaults to `--ozone-platform=x11` for better compatibility across Linux distributions. You can override it with:
+
+- CLI argument: `--ozone-platform=wayland`
+- Environment variable: `CODEX_APP_OZONE_PLATFORM=wayland`
+
 ## Updating
 
 You can check for a new upstream release and auto-update `package.nix` with:

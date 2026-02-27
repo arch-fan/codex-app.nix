@@ -827,8 +827,23 @@ stdenv.mkDerivation {
       export CODEX_CLI_PATH="\$(command -v codex)"
     fi
 
+    extra_args=()
+    has_ozone_platform_flag=0
+    for arg in "\$@"; do
+      case "\$arg" in
+        --ozone-platform|--ozone-platform=*)
+          has_ozone_platform_flag=1
+          ;;
+      esac
+    done
+
+    # Default to x11 on Linux to improve compatibility on non-NixOS distros.
+    if [ "\$has_ozone_platform_flag" -eq 0 ]; then
+      extra_args+=("--ozone-platform=''${CODEX_APP_OZONE_PLATFORM:-x11}")
+    fi
+
     cd "$out/share/${pname}/app"
-    exec "${electron_40}/bin/electron" "\$APP_DIR" --no-sandbox "\$@"
+    exec "${electron_40}/bin/electron" "\$APP_DIR" --no-sandbox "''${extra_args[@]}" "\$@"
     EOF
 
     chmod +x "$out/bin/codex-app"
