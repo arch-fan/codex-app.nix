@@ -703,6 +703,10 @@ stdenv.mkDerivation {
     copyDesktopItems
     nodePackages.asar
     nodejs_24
+    python3
+    pkg-config
+    gnumake
+    gcc
     unzip
   ];
 
@@ -733,10 +737,22 @@ stdenv.mkDerivation {
     cp -r "${rebuiltNativeModules}/node_modules/better-sqlite3" "$appDir/node_modules/"
     cp -r "${rebuiltNativeModules}/node_modules/node-pty" "$appDir/node_modules/"
 
+    # Force a final native rebuild against Electron headers to avoid ABI drift.
+    chmod -R u+w "$appDir/node_modules/better-sqlite3" "$appDir/node_modules/node-pty"
+    pushd "$appDir" >/dev/null
+    export npm_config_nodedir="${electron_40.headers}"
+    export npm_config_runtime="electron"
+    export npm_config_target="${electron_40.version}"
+    export npm_config_disturl="https://electronjs.org/headers"
+    export npm_config_build_from_source="true"
+    export npm_config_offline="true"
+    npm rebuild better-sqlite3 node-pty --foreground-scripts
+    popd >/dev/null
+
     if [ -d "$appDir/app.asar.unpacked/node_modules" ]; then
       rm -rf "$appDir/app.asar.unpacked/node_modules/better-sqlite3" "$appDir/app.asar.unpacked/node_modules/node-pty"
-      cp -r "${rebuiltNativeModules}/node_modules/better-sqlite3" "$appDir/app.asar.unpacked/node_modules/"
-      cp -r "${rebuiltNativeModules}/node_modules/node-pty" "$appDir/app.asar.unpacked/node_modules/"
+      cp -r "$appDir/node_modules/better-sqlite3" "$appDir/app.asar.unpacked/node_modules/"
+      cp -r "$appDir/node_modules/node-pty" "$appDir/app.asar.unpacked/node_modules/"
     fi
 
     rm -f "$appDir/native/sparkle.node"
