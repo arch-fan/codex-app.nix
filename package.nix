@@ -3,7 +3,6 @@
   stdenv,
   buildNpmPackage,
   fetchurl,
-  makeWrapper,
   copyDesktopItems,
   makeDesktopItem,
   nodePackages,
@@ -577,7 +576,6 @@ stdenv.mkDerivation {
 
   nativeBuildInputs = [
     copyDesktopItems
-    makeWrapper
     nodePackages.asar
     nodejs_24
     p7zip
@@ -652,6 +650,30 @@ stdenv.mkDerivation {
 
     mkdir -p "$out/share/${pname}"
     cp -r "$appDir" "$out/share/${pname}/app"
+
+    # Smoke-test native modules against the Electron runtime without starting UI.
+    cat > "$TMPDIR/check-native.cjs" <<'JS'
+    const fs = require("node:fs");
+    const path = require("node:path");
+
+    const appDir = process.argv[2];
+    const checks = [
+      path.join(appDir, "node_modules", "better-sqlite3"),
+      path.join(appDir, "node_modules", "node-pty"),
+      path.join(appDir, "app.asar.unpacked", "node_modules", "better-sqlite3"),
+      path.join(appDir, "app.asar.unpacked", "node_modules", "node-pty"),
+    ];
+
+    for (const modPath of checks) {
+      if (!fs.existsSync(modPath)) continue;
+      // eslint-disable-next-line no-console
+      console.log(`Checking native module: ''${modPath}`);
+      // eslint-disable-next-line import/no-dynamic-require, global-require
+      require(modPath);
+    }
+    JS
+
+    ELECTRON_RUN_AS_NODE=1 "${electron_40}/bin/electron" "$TMPDIR/check-native.cjs" "$out/share/${pname}/app"
 
     mkdir -p "$out/bin"
     cat > "$out/bin/codex-app" <<EOF
