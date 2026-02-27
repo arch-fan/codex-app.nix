@@ -3,7 +3,7 @@ name: Update Codex App
 on:
   workflow_dispatch:
   schedule:
-    - cron: "17 * * * *"
+    - cron: "0 * * * *"
 
 permissions:
   contents: write
@@ -28,10 +28,44 @@ jobs:
         uses: DeterminateSystems/magic-nix-cache-action@v13
 
       - name: Run updater
+        env:
+          APPLY_UPDATES: "1"
         run: nix run .#update
 
+      - name: Detect changes
+        id: changes
+        run: |
+          if git diff --quiet -- package.nix; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build updated package
+        if: steps.changes.outputs.changed == 'true'
+        run: nix build .#codex-app
+
+      - name: Optional smoke test (headless)
+        if: steps.changes.outputs.changed == 'true'
+        continue-on-error: true
+        run: |
+          if command -v xvfb-run >/dev/null 2>&1; then
+            set +e
+            timeout 30s xvfb-run -a ./result/bin/codex-app
+            rc=$?
+            set -e
+            if [ "$rc" -eq 0 ] || [ "$rc" -eq 124 ]; then
+              echo "Smoke test succeeded (rc=$rc)."
+            else
+              echo "Smoke test failed (rc=$rc)."
+              exit "$rc"
+            fi
+          else
+            echo "xvfb-run not available on this runner, skipping optional smoke test."
+          fi
+
       - name: Create pull request
-        if: ${{ !env.ACT }}
+        if: ${{ !env.ACT && steps.changes.outputs.changed == 'true' }}
         uses: peter-evans/create-pull-request@v8.1.0
         with:
           commit-message: "chore: update codex-app to latest upstream release"

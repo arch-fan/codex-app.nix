@@ -117,6 +117,12 @@ PY
         exit 0
       fi
 
+      if [ "''${APPLY_UPDATES:-0}" != "1" ]; then
+        echo "Update available, but running in check-only mode."
+        echo "Set APPLY_UPDATES=1 to write changes into package.nix."
+        exit 0
+      fi
+
       python3 - "$package_file" "$latest_version" "$latest_hash" <<'PY'
 import re
 import sys

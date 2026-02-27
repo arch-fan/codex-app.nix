@@ -35,3 +35,7 @@ You can check for a new upstream release and auto-update `package.nix` with:
 - `nix run .#update`
 
 The update app reads the official appcast feed, picks the latest release entry, computes the new Nix SRI hash, and patches `codexVersion` plus the source hash in `package.nix`.
+
+By default, it runs in check-only mode and does not modify files. To apply changes, run:
+
+- `APPLY_UPDATES=1 nix run .#update`
