@@ -15,6 +15,7 @@
   pkg-config,
   gnumake,
   gcc,
+  binutils,
   writeShellApplication,
   nix,
   runCommand,
@@ -709,6 +710,7 @@ stdenv.mkDerivation {
     pkg-config
     gnumake
     gcc
+    binutils
     libicns
     unzip
   ];
@@ -746,6 +748,17 @@ stdenv.mkDerivation {
     # Force a final native rebuild against Electron headers to avoid ABI drift.
     chmod -R u+w "$appDir/node_modules/better-sqlite3" "$appDir/node_modules/node-pty"
     pushd "$appDir" >/dev/null
+
+    # Force fallback to local compilation even when host systems leak a global
+    # prebuild-install binary into PATH (common on non-NixOS machines).
+    mkdir -p "$TMPDIR/fakebin"
+    cat > "$TMPDIR/fakebin/prebuild-install" <<'SH'
+    #!/bin/sh
+    exit 1
+    SH
+    chmod +x "$TMPDIR/fakebin/prebuild-install"
+    export PATH="$TMPDIR/fakebin:$PATH"
+
     export npm_config_nodedir="${electron_40.headers}"
     export npm_config_runtime="electron"
     export npm_config_target="${electron_40.version}"
@@ -770,15 +783,12 @@ stdenv.mkDerivation {
       mkdir -p "$iconWorkDir"
       icns2png -x -o "$iconWorkDir" "Codex.app/Contents/Resources/electron.icns" >/dev/null || true
 
-      if [ -f "$iconWorkDir/electron_512x512x32.png" ]; then
-        mkdir -p "$out/share/icons/hicolor/512x512/apps"
-        cp "$iconWorkDir/electron_512x512x32.png" "$out/share/icons/hicolor/512x512/apps/${pname}.png"
-      fi
-
-      if [ -f "$iconWorkDir/electron_256x256x32.png" ]; then
-        mkdir -p "$out/share/icons/hicolor/256x256/apps"
-        cp "$iconWorkDir/electron_256x256x32.png" "$out/share/icons/hicolor/256x256/apps/${pname}.png"
-      fi
+      for icon in "$iconWorkDir"/electron_*x*x32.png; do
+        [ -f "$icon" ] || continue
+        size="$(basename "$icon" | sed -E 's/^electron_([0-9]+)x([0-9]+)x32\.png$/\1x\2/')"
+        mkdir -p "$out/share/icons/hicolor/$size/apps"
+        cp "$icon" "$out/share/icons/hicolor/$size/apps/${pname}.png"
+      done
     fi
 
     mkdir -p "$appDir/node_modules/electron-liquid-glass" "$appDir/node_modules/sparkle"
@@ -837,23 +847,34 @@ stdenv.mkDerivation {
 
     ELECTRON_RUN_AS_NODE=1 "${electron_40}/bin/electron" "$TMPDIR/check-native.cjs" "$out/share/${pname}/app"
 
+    # Guard against stale Node-ABI builds that crash on startup in Electron.
+    for nativeNode in \
+      "$out/share/${pname}/app/node_modules/better-sqlite3/build/Release/better_sqlite3.node" \
+      "$out/share/${pname}/app/app.asar.unpacked/node_modules/better-sqlite3/build/Release/better_sqlite3.node"
+    do
+      if [ -f "$nativeNode" ] && nm -D "$nativeNode" | grep -q '_ZN2v811HandleScopeC1EPNS_7IsolateE'; then
+        echo "error: incompatible better-sqlite3 native module ABI detected: $nativeNode" >&2
+        exit 1
+      fi
+    done
+
     mkdir -p "$out/bin"
-    cat > "$out/bin/codex-app" <<EOF
-    #!${stdenv.shell}
+    cat > "$out/bin/codex-app" <<'EOF'
+    #!@SHELL@
     set -euo pipefail
 
-    APP_DIR="$out/share/${pname}/app"
+    APP_DIR="@APP_DIR@"
 
-    export ELECTRON_RENDERER_URL="file://$out/share/${pname}/app/webview/index.html"
+    export ELECTRON_RENDERER_URL="file://@APP_DIR@/webview/index.html"
 
     if [ -z "''${CODEX_CLI_PATH:-}" ] && command -v codex >/dev/null 2>&1; then
-      export CODEX_CLI_PATH="\$(command -v codex)"
+      export CODEX_CLI_PATH="$(command -v codex)"
     fi
 
     extra_args=()
     has_ozone_platform_flag=0
-    for arg in "\$@"; do
-      case "\$arg" in
+    for arg in "$@"; do
+      case "$arg" in
         --ozone-platform|--ozone-platform=*)
           has_ozone_platform_flag=1
           ;;
@@ -861,17 +882,32 @@ stdenv.mkDerivation {
     done
 
     # Default to x11 on Linux to improve compatibility on non-NixOS distros.
-    if [ "\$has_ozone_platform_flag" -eq 0 ]; then
+    if [ "$has_ozone_platform_flag" -eq 0 ]; then
       extra_args+=("--ozone-platform=''${CODEX_APP_OZONE_PLATFORM:-x11}")
     fi
 
-    cd "$out/share/${pname}/app"
-    exec "${electron_40}/bin/electron" "\$APP_DIR" --no-sandbox "''${extra_args[@]}" "\$@"
+    cd "@APP_DIR@"
+    exec "@ELECTRON_BIN@" "$APP_DIR" --no-sandbox "''${extra_args[@]}" "$@"
     EOF
+
+    substituteInPlace "$out/bin/codex-app" \
+      --replace-fail "@SHELL@" "${stdenv.shell}" \
+      --replace-fail "@APP_DIR@" "$out/share/${pname}/app" \
+      --replace-fail "@ELECTRON_BIN@" "${electron_40}/bin/electron"
 
     chmod +x "$out/bin/codex-app"
 
     runHook postInstall
+  '';
+
+  postFixup = ''
+    desktopFile="$out/share/applications/${pname}.desktop"
+    iconFile="$out/share/icons/hicolor/512x512/apps/${pname}.png"
+
+    if [ -f "$desktopFile" ] && [ -f "$iconFile" ]; then
+      substituteInPlace "$desktopFile" \
+        --replace-fail "Icon=${pname}" "Icon=$iconFile"
+    fi
   '';
 
   meta = {
