@@ -3,25 +3,144 @@
   stdenv,
   buildNpmPackage,
   fetchurl,
+  curl,
   copyDesktopItems,
   makeDesktopItem,
   nodePackages,
   nodejs_24,
   electron_40,
-  p7zip,
+  unzip,
   python3,
   pkg-config,
   gnumake,
   gcc,
+  writeShellApplication,
+  nix,
   runCommand,
 }:
 let
   pname = "codex-app";
-  version = "26.226.940";
+  codexVersion = "26.226.940";
+  version = codexVersion;
 
-  dmgSrc = fetchurl {
-    url = "https://persistent.oaistatic.com/codex-app-prod/Codex.dmg";
-    hash = "sha256-+Zv1I5HAMjXQzdpt5DxKquncOJmDRT/Cwa6Z9c5SsUA=";
+  # For reproducibility we use the versioned artifact published in appcast.xml.
+  codexSrc = fetchurl {
+    url = "https://persistent.oaistatic.com/codex-app-prod/Codex-darwin-arm64-${codexVersion}.zip";
+    hash = "sha256-2cURhFonosAlWqtU0s5t11yX2AxLiiqP2tjRlPqM1UU=";
+  };
+
+  updateScript = writeShellApplication {
+    name = "update-codex-app";
+    runtimeInputs = [
+      curl
+      python3
+      nix
+    ];
+    text = ''
+      set -euo pipefail
+
+      repo_root="$(pwd)"
+      package_file="$repo_root/package.nix"
+
+      if [ ! -f "$package_file" ]; then
+        echo "package.nix not found in current directory: $repo_root" >&2
+        exit 1
+      fi
+
+      appcast_url="https://persistent.oaistatic.com/codex-app-prod/appcast.xml"
+      appcast_xml="$(mktemp)"
+      trap 'rm -f "$appcast_xml"' EXIT
+
+      curl -fsSL "$appcast_url" -o "$appcast_xml"
+
+      read -r latest_version latest_zip_url < <(
+        python3 - "$appcast_xml" <<'PY'
+import sys
+import xml.etree.ElementTree as ET
+
+ns = {"sparkle": "http://www.andymatuschak.org/xml-namespaces/sparkle"}
+root = ET.parse(sys.argv[1]).getroot()
+item = root.find("./channel/item")
+if item is None:
+    raise SystemExit("No <item> found in appcast.xml")
+
+version = item.findtext("sparkle:shortVersionString", namespaces=ns)
+if not version:
+    version = item.findtext("title")
+if not version:
+    raise SystemExit("No version found in appcast item")
+
+enclosure = item.find("enclosure")
+if enclosure is None:
+    raise SystemExit("No enclosure URL found in appcast item")
+
+url = enclosure.attrib.get("url", "").strip()
+if not url:
+    raise SystemExit("Enclosure URL is empty")
+
+print(version, url)
+PY
+      )
+
+      current_version="$(python3 - "$package_file" <<'PY'
+import re,sys
+text = open(sys.argv[1], "r", encoding="utf-8").read()
+m = re.search(r'codexVersion = "([^"]+)";', text)
+print(m.group(1) if m else "")
+PY
+      )"
+
+      if [ "$current_version" = "$latest_version" ] && [ "''${FORCE_HASH_CHECK:-0}" != "1" ]; then
+        echo "Current version: $current_version"
+        echo "Latest version:  $latest_version"
+        echo "Already up to date (version check)."
+        exit 0
+      fi
+
+      latest_hash="$(nix store prefetch-file "$latest_zip_url" --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["hash"])')"
+
+      current_hash="$(python3 - "$package_file" <<'PY'
+import re,sys
+text = open(sys.argv[1], "r", encoding="utf-8").read()
+m = re.search(r'codexSrc = fetchurl \{.*?hash = "(sha256-[^"]+)";', text, re.S)
+print(m.group(1) if m else "")
+PY
+      )"
+
+      echo "Current version: $current_version"
+      echo "Latest version:  $latest_version"
+      echo "Current hash:    $current_hash"
+      echo "Latest hash:     $latest_hash"
+
+      if [ "$current_version" = "$latest_version" ] && [ "$current_hash" = "$latest_hash" ]; then
+        echo "Already up to date."
+        exit 0
+      fi
+
+      python3 - "$package_file" "$latest_version" "$latest_hash" <<'PY'
+import re
+import sys
+
+path, version, hash_value = sys.argv[1:4]
+text = open(path, "r", encoding="utf-8").read()
+
+text, n1 = re.subn(r'codexVersion = "[^"]+";', f'codexVersion = "{version}";', text, count=1)
+text, n2 = re.subn(
+    r'(codexSrc = fetchurl \{.*?hash = )"sha256-[^"]+";',
+    rf'\1"{hash_value}";',
+    text,
+    count=1,
+    flags=re.S,
+)
+
+if n1 != 1 or n2 != 1:
+    raise SystemExit("Failed to patch package.nix")
+
+open(path, "w", encoding="utf-8").write(text)
+PY
+
+      echo "Updated package.nix to version $latest_version"
+    '';
   };
 
   nativeModulesSrc = runCommand "codex-native-modules-src" { } ''
@@ -571,14 +690,14 @@ in
 stdenv.mkDerivation {
   inherit pname version;
 
-  src = dmgSrc;
+  src = codexSrc;
   dontUnpack = true;
 
   nativeBuildInputs = [
     copyDesktopItems
     nodePackages.asar
     nodejs_24
-    p7zip
+    unzip
   ];
 
   desktopItems = [ desktopItem ];
@@ -589,21 +708,19 @@ stdenv.mkDerivation {
     export HOME="$TMPDIR/home"
     mkdir -p "$HOME"
 
-    dmgWorkDir="$TMPDIR/dmg"
-    mkdir -p "$dmgWorkDir"
-    cd "$dmgWorkDir"
+    archiveWorkDir="$TMPDIR/archive"
+    mkdir -p "$archiveWorkDir"
+    cd "$archiveWorkDir"
 
-    # 7z reports non-zero for this HFS image, even when extraction succeeds.
-    7z x -y "$src" "Codex Installer/Codex.app/Contents/Resources/app.asar.unpacked/*" >/dev/null || true
-    7z x -y "$src" "Codex Installer/Codex.app/Contents/Resources/app.asar" >/dev/null || true
+    unzip -q "$src" "Codex.app/Contents/Resources/app.asar" "Codex.app/Contents/Resources/app.asar.unpacked/*"
 
-    test -f "Codex Installer/Codex.app/Contents/Resources/app.asar"
+    test -f "Codex.app/Contents/Resources/app.asar"
 
     appDir="$TMPDIR/app"
-    asar extract "Codex Installer/Codex.app/Contents/Resources/app.asar" "$appDir"
+    asar extract "Codex.app/Contents/Resources/app.asar" "$appDir"
 
-    if [ -d "Codex Installer/Codex.app/Contents/Resources/app.asar.unpacked" ]; then
-      cp -r "Codex Installer/Codex.app/Contents/Resources/app.asar.unpacked" "$appDir/app.asar.unpacked"
+    if [ -d "Codex.app/Contents/Resources/app.asar.unpacked" ]; then
+      cp -r "Codex.app/Contents/Resources/app.asar.unpacked" "$appDir/app.asar.unpacked"
     fi
 
     rm -rf "$appDir/node_modules/better-sqlite3" "$appDir/node_modules/node-pty"
@@ -698,11 +815,15 @@ stdenv.mkDerivation {
   '';
 
   meta = {
-    description = "Codex desktop app repackaged for Linux from the official macOS DMG";
+    description = "Codex desktop app repackaged for Linux from a versioned macOS release artifact";
     homepage = "https://openai.com";
     license = lib.licenses.unfree;
     sourceProvenance = [ lib.sourceTypes.binaryNativeCode ];
     mainProgram = "codex-app";
     platforms = [ "x86_64-linux" ];
+  };
+
+  passthru = {
+    inherit updateScript;
   };
 }
