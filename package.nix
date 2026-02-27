@@ -9,6 +9,7 @@
   nodePackages,
   nodejs_24,
   electron_40,
+  libicns,
   unzip,
   python3,
   pkg-config,
@@ -689,6 +690,7 @@ JSON
     name = pname;
     desktopName = "Codex";
     exec = "codex-app %U";
+    icon = pname;
     terminal = false;
     categories = [ "Development" "Utility" ];
   };
@@ -707,6 +709,7 @@ stdenv.mkDerivation {
     pkg-config
     gnumake
     gcc
+    libicns
     unzip
   ];
 
@@ -722,7 +725,10 @@ stdenv.mkDerivation {
     mkdir -p "$archiveWorkDir"
     cd "$archiveWorkDir"
 
-    unzip -q "$src" "Codex.app/Contents/Resources/app.asar" "Codex.app/Contents/Resources/app.asar.unpacked/*"
+    unzip -q "$src" \
+      "Codex.app/Contents/Resources/app.asar" \
+      "Codex.app/Contents/Resources/app.asar.unpacked/*" \
+      "Codex.app/Contents/Resources/electron.icns"
 
     test -f "Codex.app/Contents/Resources/app.asar"
 
@@ -757,6 +763,23 @@ stdenv.mkDerivation {
 
     rm -f "$appDir/native/sparkle.node"
     rm -f "$appDir/app.asar.unpacked/native/sparkle.node" || true
+
+    # Install a desktop icon from the upstream .icns resource.
+    if [ -f "Codex.app/Contents/Resources/electron.icns" ]; then
+      iconWorkDir="$TMPDIR/icon"
+      mkdir -p "$iconWorkDir"
+      icns2png -x -o "$iconWorkDir" "Codex.app/Contents/Resources/electron.icns" >/dev/null || true
+
+      if [ -f "$iconWorkDir/electron_512x512x32.png" ]; then
+        mkdir -p "$out/share/icons/hicolor/512x512/apps"
+        cp "$iconWorkDir/electron_512x512x32.png" "$out/share/icons/hicolor/512x512/apps/${pname}.png"
+      fi
+
+      if [ -f "$iconWorkDir/electron_256x256x32.png" ]; then
+        mkdir -p "$out/share/icons/hicolor/256x256/apps"
+        cp "$iconWorkDir/electron_256x256x32.png" "$out/share/icons/hicolor/256x256/apps/${pname}.png"
+      fi
+    fi
 
     mkdir -p "$appDir/node_modules/electron-liquid-glass" "$appDir/node_modules/sparkle"
 
