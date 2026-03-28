@@ -22,13 +22,13 @@
 }:
 let
   pname = "codex-app";
-  codexVersion = "26.325.21211";
+  codexVersion = "26.325.31654";
   version = codexVersion;
 
   # For reproducibility we use the versioned artifact published in appcast.xml.
   codexSrc = fetchurl {
     url = "https://persistent.oaistatic.com/codex-app-prod/Codex-darwin-arm64-${codexVersion}.zip";
-    hash = "sha256-J04/m8FxSUYpKFsk2qBUv57rtVHPjB3Pz1b7JIK8wrc=";
+    hash = "sha256-4ZqTl/i6G8ARa/FRSz7HDgml4+c2HT1exfbsU66cP/c=";
   };
 
   updateScript = writeShellApplication {
