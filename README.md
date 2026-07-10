@@ -1,4 +1,5 @@
 # codex-app.nix
+> Now use https://github.com/ilysenko/codex-desktop-linux
 
 > [!WARNING]
 > DANGER: This package is currently experimental and **not thoroughly tested yet**.
